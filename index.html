@@ -15,10 +15,13 @@
   h2 { margin-bottom:10px; font-size:18px; }
   .level { display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:10px; margin-bottom:8px; background:#232849; }
   .level.locked { opacity:.55; }
-  .level button { background:#ffd76a; border:none; padding:7px 14px; border-radius:8px; font-weight:bold; cursor:pointer; }
-  .btn { width:100%; padding:12px; border:none; border-radius:10px; font-size:15px; font-weight:bold; cursor:pointer; margin-top:6px; }
-  .btn-buy { background:#7b5cff; color:#fff; }
-  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2ecc71; color:#fff; padding:10px 20px; border-radius:8px; opacity:0; transition:.3s; }
+  .level button, .btn { background:#ffd76a; border:none; padding:8px 16px; border-radius:8px; font-weight:bold; cursor:pointer; }
+  .btn-buy { width:100%; padding:12px; border-radius:10px; font-size:15px; margin-top:6px; background:#7b5cff; color:#fff; }
+  /* Game screen */
+  #gameScreen { display:none; }
+  canvas { width:100%; background:#000; border-radius:10px; display:block; touch-action:none; }
+  .hud { display:flex; justify-content:space-between; padding:8px 4px; font-size:14px; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2ecc71; color:#fff; padding:10px 20px; border-radius:8px; opacity:0; transition:.3s; z-index:9; }
   .toast.show { opacity:1; }
 </style>
 </head>
@@ -28,13 +31,30 @@
   <div class="coins">🪙 <span id="coinCount">0</span></div>
 </header>
 <main>
-  <div class="card">
-    <h2>Level Select</h2>
-    <div id="levels"></div>
+  <!-- ===== MENU ===== -->
+  <div id="menu">
+    <div class="card">
+      <h2>Level Select</h2>
+      <div id="levels"></div>
+    </div>
+    <div class="card">
+      <h2>Buy Coins (Telegram Stars)</h2>
+      <div id="shop"></div>
+    </div>
   </div>
-  <div class="card">
-    <h2>Buy Coins (Telegram Stars)</h2>
-    <div id="shop"></div>
+
+  <!-- ===== GAME ===== -->
+  <div id="gameScreen">
+    <div class="card">
+      <div class="hud">
+        <span id="hudLevel">Level 1</span>
+        <span>Score: <span id="hudScore">0</span></span>
+        <span>❤️ <span id="hudLives">3</span></span>
+      </div>
+      <canvas id="cv" width="440" height="500"></canvas>
+      <p style="font-size:12px;color:#89f;margin-top:6px">Tap/hold left & right side to dodge ⬢, collect 🟡. Score 10 to win!</p>
+      <button class="btn" style="margin-top:10px" onclick="exitGame()">← Menu</button>
+    </div>
   </div>
 </main>
 <div class="toast" id="toast"></div>
@@ -43,20 +63,17 @@
 const tg = window.Telegram?.WebApp;
 tg?.ready();
 
-// ---- Data store (localStorage, shared with admin.html) ----
+// ---- Data ----
 const DB = {
   get(k, d) { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; },
   set(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
 };
-// Player state per Telegram user (fallback: "guest")
 const user = tg?.initDataUnsafe?.user;
 const uid = user ? 'player_' + user.id : 'player_guest';
-
 function getPlayer() { return DB.get(uid, { coins: 0, level: 1 }); }
 function savePlayer(p) { DB.set(uid, p); }
 function getConfig() { return DB.get('admin_config', {
-  levels: 10,
-  passCost: 50,          // coins to unlock next level
+  levels: 10, passCost: 50,
   packages: [
     { id:'pack1', coins:100, stars:50,  label:'Starter Pack' },
     { id:'pack2', coins:250, stars:100, label:'Pro Pack' },
@@ -70,11 +87,10 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-// ---- Render ----
+// ---- Render menu ----
 function render() {
   const p = getPlayer(), cfg = getConfig();
   document.getElementById('coinCount').textContent = p.coins;
-
   const lv = document.getElementById('levels');
   lv.innerHTML = '';
   for (let i = 1; i <= cfg.levels; i++) {
@@ -82,19 +98,14 @@ function render() {
     const div = document.createElement('div');
     div.className = 'level' + (unlocked ? '' : ' locked');
     div.innerHTML = `<span>Level ${i}</span>`;
-    if (unlocked) {
-      div.innerHTML += `<button onclick="toast('Playing level ${i}!')">Play</button>`;
-    } else if (i === p.level + 1) {
-      div.innerHTML += `<button onclick="buyLevel()">Pass — ${cfg.passCost} 🪙</button>`;
-    } else {
-      div.innerHTML += `<span>🔒</span>`;
-    }
+    if (unlocked) div.innerHTML += `<button onclick="startGame(${i})">Play</button>`;
+    else if (i === p.level + 1) div.innerHTML += `<button onclick="buyLevel()">Pass — ${cfg.passCost} 🪙</button>`;
+    else div.innerHTML += `<span>🔒</span>`;
     lv.appendChild(div);
   }
-
   const shop = document.getElementById('shop');
   shop.innerHTML = '';
-  cfg.packages.forEach(pkg => {
+  getConfig().packages.forEach(pkg => {
     const b = document.createElement('button');
     b.className = 'btn btn-buy';
     b.textContent = `${pkg.label}: ${pkg.coins} 🪙 — ⭐ ${pkg.stars} Stars`;
@@ -103,52 +114,142 @@ function render() {
   });
 }
 
-// ---- Level pass ----
 function buyLevel() {
   const cfg = getConfig(), p = getPlayer();
   if (p.coins >= cfg.passCost) {
-    p.coins -= cfg.passCost;
-    p.level++;
-    savePlayer(p);
-    toast(`Level ${p.level} unlocked!`);
-    render();
-  } else {
-    toast('Not enough coins — buy more below!');
-  }
+    p.coins -= cfg.passCost; p.level++; savePlayer(p);
+    toast(`Level ${p.level} unlocked!`); render();
+  } else toast('Not enough coins — buy more below!');
 }
 
-// ---- Coin purchase via Telegram Stars ----
 function buyCoins(pkg) {
   if (tg && tg.openInvoice) {
-    // PRODUCTION: your bot backend must call Bot API:
-    // createInvoiceLink({ title, description, payload, currency:'XTR', prices:[{label:'...', amount: pkg.stars}] })
-    // then return that invoice link here:
-    fetch('/api/create-invoice', {           // <-- your bot backend endpoint
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ packId: pkg.id, userId: user?.id })
-    })
+    fetch('/api/create-invoice', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ packId: pkg.id, userId: user?.id }) })
     .then(r => r.json())
-    .then(d => tg.openInvoice(d.invoiceLink, status => {
-      if (status === 'paid') {
-        const p = getPlayer();
-        p.coins += pkg.coins; savePlayer(p);
-        toast(`+${pkg.coins} coins! Thanks! ⭐`);
-        render();
-      }
-    }))
-    .catch(() => demoBuy(pkg)); // fallback for testing outside Telegram
-  } else {
-    demoBuy(pkg); // running in normal browser — simulate
-  }
+    .then(d => tg.openInvoice(d.invoiceLink, s => { if (s === 'paid') credit(pkg); }))
+    .catch(() => demoBuy(pkg));
+  } else demoBuy(pkg);
+}
+function credit(pkg) { const p = getPlayer(); p.coins += pkg.coins; savePlayer(p); toast(`+${pkg.coins} coins! ⭐`); render(); }
+function demoBuy(pkg) { credit(pkg); toast('[DEMO] Stars payment simulated'); }
+
+// =====================================================
+//  THE ACTUAL GAME — dodge blocks, collect coins
+// =====================================================
+let G = null;
+
+function startGame(level) {
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('gameScreen').style.display = 'block';
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  G = {
+    level, ctx, cv,
+    player: { x: cv.width/2 - 20, y: cv.height - 60, w: 40, h: 40, speed: 6 },
+    items: [],      // falling objects
+    score: 0, lives: 3, target: 10,
+    keys: {}, running: true, raf: null
+  };
+  document.getElementById('hudLevel').textContent = 'Level ' + level;
+  updateHud();
+
+  // controls: keyboard
+  const kd = e => { G.keys[e.key] = true; };
+  const ku = e => { G.keys[e.key] = false; };
+  document.addEventListener('keydown', kd);
+  document.addEventListener('keyup', ku);
+  G.cleanupKeys = () => { document.removeEventListener('keydown', kd); document.removeEventListener('keyup', ku); };
+
+  // controls: touch left/right half of canvas
+  const ts = e => {
+    const r = cv.getBoundingClientRect(), x = (e.touches[0].clientX - r.left) / r.width;
+    G.keys[x < 0.5 ? 'ArrowLeft' : 'ArrowRight'] = true;
+  };
+  const te = () => { G.keys = {}; };
+  cv.addEventListener('touchstart', ts);
+  cv.addEventListener('touchend', te);
+  G.cleanupTouch = () => { cv.removeEventListener('touchstart', ts); cv.removeEventListener('touchend', te); };
+
+  loop();
 }
 
-function demoBuy(pkg) {
-  const p = getPlayer();
-  p.coins += pkg.coins;
-  savePlayer(p);
-  toast(`[DEMO] +${pkg.coins} coins (Stars payment simulated)`);
+function exitGame() {
+  if (G) { G.running = false; cancelAnimationFrame(G.raf); G.cleanupKeys?.(); G.cleanupTouch?.(); G = null; }
+  document.getElementById('gameScreen').style.display = 'none';
+  document.getElementById('menu').style.display = 'block';
   render();
+}
+
+function updateHud() {
+  document.getElementById('hudScore').textContent = G.score;
+  document.getElementById('hudLives').textContent = G.lives;
+}
+
+function loop() {
+  if (!G || !G.running) return;
+  const { ctx, cv, player } = G;
+
+  // difficulty scales with level
+  const speed = 3 + G.level * 0.5;
+  const spawnRate = 30 - Math.min(G.level * 2, 15);
+
+  // move player
+  if (G.keys['ArrowLeft'] || G.keys['a'])  player.x -= player.speed;
+  if (G.keys['ArrowRight'] || G.keys['d']) player.x += player.speed;
+  player.x = Math.max(0, Math.min(cv.width - player.w, player.x));
+
+  // spawn items
+  if (Math.random() < 1/spawnRate) {
+    const isCoin = Math.random() < 0.35;
+    G.items.push({ x: Math.random() * (cv.width - 24), y: -24, w: 24, h: 24, coin: isCoin });
+  }
+
+  // update items
+  for (let i = G.items.length - 1; i >= 0; i--) {
+    const it = G.items[i];
+    it.y += speed;
+    // collision
+    if (it.x < player.x + player.w && it.x + it.w > player.x &&
+        it.y < player.y + player.h && it.y + it.h > player.y) {
+      G.items.splice(i, 1);
+      if (it.coin) { G.score++; updateHud();
+        if (G.score >= G.target) return winGame();
+      } else {
+        G.lives--; updateHud();
+        if (G.lives <= 0) return loseGame();
+      }
+      continue;
+    }
+    if (it.y > cv.height) G.items.splice(i, 1);
+  }
+
+  // draw
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#4fd2ff';
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+  for (const it of G.items) {
+    if (it.coin) { ctx.fillStyle = '#ffd76a'; ctx.beginPath(); ctx.arc(it.x+12, it.y+12, 12, 0, 7); ctx.fill(); }
+    else { ctx.fillStyle = '#e74c3c'; ctx.fillRect(it.x, it.y, it.w, it.h); }
+  }
+
+  G.raf = requestAnimationFrame(loop);
+}
+
+function winGame() {
+  G.running = false; cancelAnimationFrame(G.raf); G.cleanupKeys?.(); G.cleanupTouch?.();
+  const p = getPlayer();
+  // reward: unlock next level + bonus coins
+  if (G.level === p.level) { p.level++; toast('Level complete! Level ' + p.level + ' unlocked!'); }
+  p.coins += 5 + G.level; savePlayer(p);
+  G = null;
+  setTimeout(exitGame, 1200);
+}
+
+function loseGame() {
+  G.running = false; cancelAnimationFrame(G.raf); G.cleanupKeys?.(); G.cleanupTouch?.();
+  toast('Game over! Try again.');
+  const lvl = G.level; G = null;
+  setTimeout(() => startGame(lvl), 1000);
 }
 
 render();
