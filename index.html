@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Star Runner — Game</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:system-ui,sans-serif; }
+  body { background:#0f1220; color:#eef; min-height:100vh; display:flex; flex-direction:column; align-items:center; }
+  header { width:100%; display:flex; justify-content:space-between; align-items:center; padding:14px 18px; background:#171b2e; }
+  .coins { background:#2a2f4a; padding:6px 14px; border-radius:20px; font-weight:bold; color:#ffd76a; }
+  main { width:100%; max-width:480px; padding:20px; flex:1; }
+  .card { background:#1a1f36; border-radius:14px; padding:18px; margin-bottom:14px; }
+  h2 { margin-bottom:10px; font-size:18px; }
+  .level { display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:10px; margin-bottom:8px; background:#232849; }
+  .level.locked { opacity:.55; }
+  .level button { background:#ffd76a; border:none; padding:7px 14px; border-radius:8px; font-weight:bold; cursor:pointer; }
+  .btn { width:100%; padding:12px; border:none; border-radius:10px; font-size:15px; font-weight:bold; cursor:pointer; margin-top:6px; }
+  .btn-buy { background:#7b5cff; color:#fff; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2ecc71; color:#fff; padding:10px 20px; border-radius:8px; opacity:0; transition:.3s; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<header>
+  <strong>⭐ Star Runner</strong>
+  <div class="coins">🪙 <span id="coinCount">0</span></div>
+</header>
+<main>
+  <div class="card">
+    <h2>Level Select</h2>
+    <div id="levels"></div>
+  </div>
+  <div class="card">
+    <h2>Buy Coins (Telegram Stars)</h2>
+    <div id="shop"></div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+tg?.ready();
+
+// ---- Data store (localStorage, shared with admin.html) ----
+const DB = {
+  get(k, d) { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; },
+  set(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
+};
+// Player state per Telegram user (fallback: "guest")
+const user = tg?.initDataUnsafe?.user;
+const uid = user ? 'player_' + user.id : 'player_guest';
+
+function getPlayer() { return DB.get(uid, { coins: 0, level: 1 }); }
+function savePlayer(p) { DB.set(uid, p); }
+function getConfig() { return DB.get('admin_config', {
+  levels: 10,
+  passCost: 50,          // coins to unlock next level
+  packages: [
+    { id:'pack1', coins:100, stars:50,  label:'Starter Pack' },
+    { id:'pack2', coins:250, stars:100, label:'Pro Pack' },
+    { id:'pack3', coins:600, stars:200, label:'Mega Pack' }
+  ]
+}); }
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ---- Render ----
+function render() {
+  const p = getPlayer(), cfg = getConfig();
+  document.getElementById('coinCount').textContent = p.coins;
+
+  const lv = document.getElementById('levels');
+  lv.innerHTML = '';
+  for (let i = 1; i <= cfg.levels; i++) {
+    const unlocked = i <= p.level;
+    const div = document.createElement('div');
+    div.className = 'level' + (unlocked ? '' : ' locked');
+    div.innerHTML = `<span>Level ${i}</span>`;
+    if (unlocked) {
+      div.innerHTML += `<button onclick="toast('Playing level ${i}!')">Play</button>`;
+    } else if (i === p.level + 1) {
+      div.innerHTML += `<button onclick="buyLevel()">Pass — ${cfg.passCost} 🪙</button>`;
+    } else {
+      div.innerHTML += `<span>🔒</span>`;
+    }
+    lv.appendChild(div);
+  }
+
+  const shop = document.getElementById('shop');
+  shop.innerHTML = '';
+  cfg.packages.forEach(pkg => {
+    const b = document.createElement('button');
+    b.className = 'btn btn-buy';
+    b.textContent = `${pkg.label}: ${pkg.coins} 🪙 — ⭐ ${pkg.stars} Stars`;
+    b.onclick = () => buyCoins(pkg);
+    shop.appendChild(b);
+  });
+}
+
+// ---- Level pass ----
+function buyLevel() {
+  const cfg = getConfig(), p = getPlayer();
+  if (p.coins >= cfg.passCost) {
+    p.coins -= cfg.passCost;
+    p.level++;
+    savePlayer(p);
+    toast(`Level ${p.level} unlocked!`);
+    render();
+  } else {
+    toast('Not enough coins — buy more below!');
+  }
+}
+
+// ---- Coin purchase via Telegram Stars ----
+function buyCoins(pkg) {
+  if (tg && tg.openInvoice) {
+    // PRODUCTION: your bot backend must call Bot API:
+    // createInvoiceLink({ title, description, payload, currency:'XTR', prices:[{label:'...', amount: pkg.stars}] })
+    // then return that invoice link here:
+    fetch('/api/create-invoice', {           // <-- your bot backend endpoint
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ packId: pkg.id, userId: user?.id })
+    })
+    .then(r => r.json())
+    .then(d => tg.openInvoice(d.invoiceLink, status => {
+      if (status === 'paid') {
+        const p = getPlayer();
+        p.coins += pkg.coins; savePlayer(p);
+        toast(`+${pkg.coins} coins! Thanks! ⭐`);
+        render();
+      }
+    }))
+    .catch(() => demoBuy(pkg)); // fallback for testing outside Telegram
+  } else {
+    demoBuy(pkg); // running in normal browser — simulate
+  }
+}
+
+function demoBuy(pkg) {
+  const p = getPlayer();
+  p.coins += pkg.coins;
+  savePlayer(p);
+  toast(`[DEMO] +${pkg.coins} coins (Stars payment simulated)`);
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
