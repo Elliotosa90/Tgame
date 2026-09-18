@@ -17,21 +17,19 @@
   .level.locked { opacity:.55; }
   .level button, .btn { background:#ffd76a; border:none; padding:8px 16px; border-radius:8px; font-weight:bold; cursor:pointer; }
   .btn-buy { width:100%; padding:12px; border-radius:10px; font-size:15px; margin-top:6px; background:#7b5cff; color:#fff; }
-  /* Game screen */
-  #gameScreen { display:none; }
   canvas { width:100%; background:#000; border-radius:10px; display:block; touch-action:none; }
   .hud { display:flex; justify-content:space-between; padding:8px 4px; font-size:14px; }
   .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#2ecc71; color:#fff; padding:10px 20px; border-radius:8px; opacity:0; transition:.3s; z-index:9; }
   .toast.show { opacity:1; }
+  #status { font-size:12px; color:#7f8; }
 </style>
 </head>
 <body>
 <header>
   <strong>⭐ Star Runner</strong>
-  <div class="coins">🪙 <span id="coinCount">0</span></div>
+  <div><span id="status">● connecting…</span> &nbsp; <span class="coins">🪙 <span id="coinCount">0</span></span></div>
 </header>
 <main>
-  <!-- ===== MENU ===== -->
   <div id="menu">
     <div class="card">
       <h2>Level Select</h2>
@@ -42,9 +40,7 @@
       <div id="shop"></div>
     </div>
   </div>
-
-  <!-- ===== GAME ===== -->
-  <div id="gameScreen">
+  <div id="gameScreen" style="display:none">
     <div class="card">
       <div class="hud">
         <span id="hudLevel">Level 1</span>
@@ -59,200 +55,200 @@
 </main>
 <div class="toast" id="toast"></div>
 
-<script>
+<script type="module">
 const tg = window.Telegram?.WebApp;
 tg?.ready();
 
-// ---- Data ----
-const DB = {
-  get(k, d) { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; },
-  set(k, v) { localStorage.setItem(k, JSON.stringify(v)); }
+// ================= FIREBASE =================
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {   // <<< REPLACE with your Firebase web config
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "YOUR_APP_ID"
 };
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// Telegram user identity
 const user = tg?.initDataUnsafe?.user;
-const uid = user ? 'player_' + user.id : 'player_guest';
-function getPlayer() { return DB.get(uid, { coins: 0, level: 1 }); }
-function savePlayer(p) { DB.set(uid, p); }
-function getConfig() { return DB.get('admin_config', {
-  levels: 10, passCost: 50,
-  packages: [
-    { id:'pack1', coins:100, stars:50,  label:'Starter Pack' },
-    { id:'pack2', coins:250, stars:100, label:'Pro Pack' },
-    { id:'pack3', coins:600, stars:200, label:'Mega Pack' }
-  ]
-}); }
+const uid = user ? String(user.id) : 'guest';
+document.getElementById('status').textContent = user ? `👤 ${user.first_name}` : '⚠ not in Telegram';
+
+let player = { coins: 0, level: 1 };
+let config = { levels: 10, passCost: 50, packages: [] };
+
+// REAL-TIME: player data syncs instantly (coins update the moment payment lands)
+onSnapshot(doc(db, 'players', uid), snap => {
+  if (snap.exists()) {
+    player = snap.data();
+  } else {
+    player = { coins: 0, level: 1, name: user?.first_name || 'Guest', createdAt: serverTimestamp() };
+    setDoc(doc(db, 'players', uid), player);
+  }
+  document.getElementById('coinCount').textContent = player.coins;
+  renderLevels();
+});
+
+// REAL-TIME: admin price/level changes propagate live to all players
+onSnapshot(doc(db, 'config', 'game'), snap => {
+  if (snap.exists()) config = snap.data();
+  renderLevels(); renderShop();
+});
 
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2200);
+  setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-// ---- Render menu ----
-function render() {
-  const p = getPlayer(), cfg = getConfig();
-  document.getElementById('coinCount').textContent = p.coins;
+async function savePlayer() { await setDoc(doc(db, 'players', uid), player, { merge: true }); }
+
+// ================= RENDER =================
+function renderLevels() {
   const lv = document.getElementById('levels');
   lv.innerHTML = '';
-  for (let i = 1; i <= cfg.levels; i++) {
-    const unlocked = i <= p.level;
+  for (let i = 1; i <= (config.levels || 10); i++) {
+    const unlocked = i <= player.level;
     const div = document.createElement('div');
     div.className = 'level' + (unlocked ? '' : ' locked');
     div.innerHTML = `<span>Level ${i}</span>`;
     if (unlocked) div.innerHTML += `<button onclick="startGame(${i})">Play</button>`;
-    else if (i === p.level + 1) div.innerHTML += `<button onclick="buyLevel()">Pass — ${cfg.passCost} 🪙</button>`;
+    else if (i === player.level + 1) div.innerHTML += `<button onclick="buyLevel()">Pass — ${config.passCost} 🪙</button>`;
     else div.innerHTML += `<span>🔒</span>`;
     lv.appendChild(div);
   }
+}
+function renderShop() {
   const shop = document.getElementById('shop');
   shop.innerHTML = '';
-  getConfig().packages.forEach(pkg => {
+  (config.packages || []).forEach(pkg => {
     const b = document.createElement('button');
     b.className = 'btn btn-buy';
-    b.textContent = `${pkg.label}: ${pkg.coins} 🪙 — ⭐ ${pkg.stars} Stars`;
+    b.textContent = `${pkg.label}: ${pkg.coins} 🪙 — ⭐ ${pkg.stars}`;
     b.onclick = () => buyCoins(pkg);
     shop.appendChild(b);
   });
 }
+window.startGame = startGame; window.exitGame = exitGame; window.buyLevel = buyLevel;
 
-function buyLevel() {
-  const cfg = getConfig(), p = getPlayer();
-  if (p.coins >= cfg.passCost) {
-    p.coins -= cfg.passCost; p.level++; savePlayer(p);
-    toast(`Level ${p.level} unlocked!`); render();
+// ================= LEVEL PASS =================
+async function buyLevel() {
+  if (player.coins >= config.passCost) {
+    player.coins -= config.passCost;
+    player.level++;
+    await savePlayer();
+    toast(`Level ${player.level} unlocked!`);
   } else toast('Not enough coins — buy more below!');
 }
 
-function buyCoins(pkg) {
-  if (tg && tg.openInvoice) {
-    fetch('/api/create-invoice', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ packId: pkg.id, userId: user?.id }) })
-    .then(r => r.json())
-    .then(d => tg.openInvoice(d.invoiceLink, s => { if (s === 'paid') credit(pkg); }))
-    .catch(() => demoBuy(pkg));
-  } else demoBuy(pkg);
+// ================= LIVE STARS PAYMENT =================
+// Your backend (Part 3) creates the invoice via the Bot API.
+const API_BASE = 'https://your-backend.example.com';  // <<< REPLACE with your backend URL
+
+async function buyCoins(pkg) {
+  if (!user) { toast('Open this inside Telegram to pay with Stars'); return; }
+  try {
+    toast('Creating invoice…');
+    const res = await fetch(API_BASE + '/api/create-invoice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        packId: pkg.id,
+        userId: user.id,
+        // Send Telegram's initData so the backend can verify the request is genuine
+        initData: tg?.initData || ''
+      })
+    });
+    const data = await res.json();
+    if (!data.invoiceLink) throw new Error(data.error || 'No invoice link');
+
+    tg.openInvoice(data.invoiceLink, async (status) => {
+      if (status === 'paid') {
+        // Backend webhook already credited Firebase; real-time snapshot updates the UI.
+        toast('Payment received! ⭐');
+      } else if (status === 'failed') toast('Payment failed');
+      else if (status === 'cancelled') toast('Payment cancelled');
+    });
+  } catch (e) {
+    toast('Error: ' + e.message);
+  }
 }
-function credit(pkg) { const p = getPlayer(); p.coins += pkg.coins; savePlayer(p); toast(`+${pkg.coins} coins! ⭐`); render(); }
-function demoBuy(pkg) { credit(pkg); toast('[DEMO] Stars payment simulated'); }
 
-// =====================================================
-//  THE ACTUAL GAME — dodge blocks, collect coins
-// =====================================================
+// ================= GAME (unchanged dodger) =================
 let G = null;
-
 function startGame(level) {
   document.getElementById('menu').style.display = 'none';
   document.getElementById('gameScreen').style.display = 'block';
   const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
-  G = {
-    level, ctx, cv,
+  G = { level, ctx, cv,
     player: { x: cv.width/2 - 20, y: cv.height - 60, w: 40, h: 40, speed: 6 },
-    items: [],      // falling objects
-    score: 0, lives: 3, target: 10,
-    keys: {}, running: true, raf: null
-  };
+    items: [], score: 0, lives: 3, target: 10, keys: {}, running: true, raf: null };
   document.getElementById('hudLevel').textContent = 'Level ' + level;
   updateHud();
-
-  // controls: keyboard
-  const kd = e => { G.keys[e.key] = true; };
-  const ku = e => { G.keys[e.key] = false; };
-  document.addEventListener('keydown', kd);
-  document.addEventListener('keyup', ku);
+  const kd = e => G.keys[e.key] = true, ku = e => G.keys[e.key] = false;
+  document.addEventListener('keydown', kd); document.addEventListener('keyup', ku);
   G.cleanupKeys = () => { document.removeEventListener('keydown', kd); document.removeEventListener('keyup', ku); };
-
-  // controls: touch left/right half of canvas
-  const ts = e => {
-    const r = cv.getBoundingClientRect(), x = (e.touches[0].clientX - r.left) / r.width;
-    G.keys[x < 0.5 ? 'ArrowLeft' : 'ArrowRight'] = true;
-  };
-  const te = () => { G.keys = {}; };
-  cv.addEventListener('touchstart', ts);
-  cv.addEventListener('touchend', te);
+  const ts = e => { const r = cv.getBoundingClientRect(); G.keys[(e.touches[0].clientX - r.left)/r.width < .5 ? 'ArrowLeft':'ArrowRight'] = true; };
+  const te = () => G.keys = {};
+  cv.addEventListener('touchstart', ts); cv.addEventListener('touchend', te);
   G.cleanupTouch = () => { cv.removeEventListener('touchstart', ts); cv.removeEventListener('touchend', te); };
-
   loop();
 }
-
 function exitGame() {
   if (G) { G.running = false; cancelAnimationFrame(G.raf); G.cleanupKeys?.(); G.cleanupTouch?.(); G = null; }
   document.getElementById('gameScreen').style.display = 'none';
   document.getElementById('menu').style.display = 'block';
-  render();
 }
-
 function updateHud() {
   document.getElementById('hudScore').textContent = G.score;
   document.getElementById('hudLives').textContent = G.lives;
 }
-
 function loop() {
   if (!G || !G.running) return;
-  const { ctx, cv, player } = G;
-
-  // difficulty scales with level
-  const speed = 3 + G.level * 0.5;
-  const spawnRate = 30 - Math.min(G.level * 2, 15);
-
-  // move player
-  if (G.keys['ArrowLeft'] || G.keys['a'])  player.x -= player.speed;
-  if (G.keys['ArrowRight'] || G.keys['d']) player.x += player.speed;
-  player.x = Math.max(0, Math.min(cv.width - player.w, player.x));
-
-  // spawn items
-  if (Math.random() < 1/spawnRate) {
-    const isCoin = Math.random() < 0.35;
-    G.items.push({ x: Math.random() * (cv.width - 24), y: -24, w: 24, h: 24, coin: isCoin });
-  }
-
-  // update items
+  const { ctx, cv, player: pl } = G;
+  const speed = 3 + G.level * 0.5, spawnRate = 30 - Math.min(G.level * 2, 15);
+  if (G.keys['ArrowLeft'] || G.keys['a']) pl.x -= pl.speed;
+  if (G.keys['ArrowRight'] || G.keys['d']) pl.x += pl.speed;
+  pl.x = Math.max(0, Math.min(cv.width - pl.w, pl.x));
+  if (Math.random() < 1/spawnRate)
+    G.items.push({ x: Math.random()*(cv.width-24), y: -24, w: 24, h: 24, coin: Math.random() < .35 });
   for (let i = G.items.length - 1; i >= 0; i--) {
-    const it = G.items[i];
-    it.y += speed;
-    // collision
-    if (it.x < player.x + player.w && it.x + it.w > player.x &&
-        it.y < player.y + player.h && it.y + it.h > player.y) {
+    const it = G.items[i]; it.y += speed;
+    if (it.x < pl.x + pl.w && it.x + it.w > pl.x && it.y < pl.y + pl.h && it.y + it.h > pl.y) {
       G.items.splice(i, 1);
-      if (it.coin) { G.score++; updateHud();
-        if (G.score >= G.target) return winGame();
-      } else {
-        G.lives--; updateHud();
-        if (G.lives <= 0) return loseGame();
-      }
+      if (it.coin) { G.score++; updateHud(); if (G.score >= G.target) return winGame(); }
+      else { G.lives--; updateHud(); if (G.lives <= 0) return loseGame(); }
       continue;
     }
     if (it.y > cv.height) G.items.splice(i, 1);
   }
-
-  // draw
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.fillStyle = '#4fd2ff';
-  ctx.fillRect(player.x, player.y, player.w, player.h);
+  ctx.fillStyle = '#4fd2ff'; ctx.fillRect(pl.x, pl.y, pl.w, pl.h);
   for (const it of G.items) {
     if (it.coin) { ctx.fillStyle = '#ffd76a'; ctx.beginPath(); ctx.arc(it.x+12, it.y+12, 12, 0, 7); ctx.fill(); }
     else { ctx.fillStyle = '#e74c3c'; ctx.fillRect(it.x, it.y, it.w, it.h); }
   }
-
   G.raf = requestAnimationFrame(loop);
 }
-
-function winGame() {
+async function winGame() {
   G.running = false; cancelAnimationFrame(G.raf); G.cleanupKeys?.(); G.cleanupTouch?.();
-  const p = getPlayer();
-  // reward: unlock next level + bonus coins
-  if (G.level === p.level) { p.level++; toast('Level complete! Level ' + p.level + ' unlocked!'); }
-  p.coins += 5 + G.level; savePlayer(p);
+  if (G.level === player.level) { player.level++; toast('Level complete! Next level unlocked!'); }
+  player.coins += 5 + G.level;
+  await savePlayer();
   G = null;
   setTimeout(exitGame, 1200);
 }
-
-function loseGame() {
+async function loseGame() {
   G.running = false; cancelAnimationFrame(G.raf); G.cleanupKeys?.(); G.cleanupTouch?.();
-  toast('Game over! Try again.');
+  toast('Game over! Restarting…');
   const lvl = G.level; G = null;
   setTimeout(() => startGame(lvl), 1000);
 }
-
-render();
 </script>
 </body>
 </html>
