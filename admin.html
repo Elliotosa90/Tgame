@@ -2,7 +2,15 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const firebaseConfig = { /* same as index.html */ };
+const firebaseConfig = { 
+  apiKey: "AIzaSyDs1bLIc1sB7zKNME901XHKCRDJdEgApdE",
+  authDomain: "telestars-7f2ab.firebaseapp.com",
+  databaseURL: "https://telestars-7f2ab-default-rtdb.firebaseio.com",
+  projectId: "telestars-7f2ab",
+  storageBucket: "telestars-7f2ab.firebasestorage.app",
+  messagingSenderId: "804548585859",
+  appId: "1:804548585859:web:709f43d52fe42dedc72eb6"
+};
 const db = getFirestore(initializeApp(firebaseConfig));
 
 function addPack(p = { id:'pack'+Date.now(), coins:100, stars:50, label:'New Pack' }) {
