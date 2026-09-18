@@ -63,13 +63,14 @@ tg?.ready();
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const firebaseConfig = {   // <<< REPLACE with your Firebase web config
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "YOUR_APP_ID"
+const firebaseConfig = {
+  apiKey: "AIzaSyDs1bLIc1sB7zKNME901XHKCRDJdEgApdE",
+  authDomain: "telestars-7f2ab.firebaseapp.com",
+  databaseURL: "https://telestars-7f2ab-default-rtdb.firebaseio.com",
+  projectId: "telestars-7f2ab",
+  storageBucket: "telestars-7f2ab.firebasestorage.app",
+  messagingSenderId: "804548585859",
+  appId: "1:804548585859:web:709f43d52fe42dedc72eb6"
 };
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
