@@ -1,8 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Panel</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:system-ui,sans-serif; }
+  body { background:#0f1220; color:#eef; padding:20px; }
+  .card { background:#1a1f36; border-radius:14px; padding:18px; max-width:520px; margin:0 auto 16px; }
+  h2 { margin-bottom:12px; }
+  label { display:block; font-size:13px; margin:10px 0 4px; color:#9aa; }
+  input { width:100%; padding:9px; border-radius:8px; border:1px solid #334; background:#12162a; color:#fff; }
+  .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .row input { margin:0; }
+  .row .del { background:#e74c3c; color:#fff; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; }
+  button.save { width:100%; margin-top:14px; padding:12px; border:none; border-radius:10px; background:#2ecc71; color:#fff; font-weight:bold; cursor:pointer; }
+  .msg { color:#2ecc71; text-align:center; margin-top:8px; display:none; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>⚙️ Game Settings</h2>
+  <label>Total levels</label>
+  <input type="number" id="levels">
+  <label>Coins required to pass a level</label>
+  <input type="number" id="passCost">
+</div>
+
+<div class="card">
+  <h2>⭐ Coin Packages (Telegram Stars pricing)</h2>
+  <div id="packs"></div>
+  <button class="save" style="background:#7b5cff" onclick="addPack()">+ Add Package</button>
+</div>
+
+<div class="card">
+  <h2>💾 Save</h2>
+  <button class="save" onclick="save()">Save Configuration</button>
+  <p class="msg" id="msg">Saved! Changes are live for all players.</p>
+</div>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const firebaseConfig = { 
+const firebaseConfig = {
   apiKey: "AIzaSyDs1bLIc1sB7zKNME901XHKCRDJdEgApdE",
   authDomain: "telestars-7f2ab.firebaseapp.com",
   databaseURL: "https://telestars-7f2ab-default-rtdb.firebaseio.com",
@@ -13,7 +55,8 @@ const firebaseConfig = {
 };
 const db = getFirestore(initializeApp(firebaseConfig));
 
-function addPack(p = { id:'pack'+Date.now(), coins:100, stars:50, label:'New Pack' }) {
+window.addPack = function(p) {
+  p = p || { coins:100, stars:50, label:'New Pack' };
   const div = document.createElement('div');
   div.className = 'row';
   div.innerHTML = `
@@ -22,33 +65,38 @@ function addPack(p = { id:'pack'+Date.now(), coins:100, stars:50, label:'New Pac
     <input type="number" placeholder="Stars" value="${p.stars}" style="flex:1" data-f="stars">
     <button class="del" onclick="this.parentElement.remove()">✕</button>`;
   document.getElementById('packs').appendChild(div);
-}
-window.addPack = addPack;
+};
 
-function save() {
+window.save = function() {
   const cfg = {
     levels: +document.getElementById('levels').value,
     passCost: +document.getElementById('passCost').value,
-    packages: [...document.querySelectorAll('#packs .row')].map(row => ({
-      id: 'pack' + Math.random().toString(36).slice(2,8),
-      label: row.querySelector('[data-f=label]').value,
-      coins: +row.querySelector('[data-f=coins]').value,
-      stars: +row.querySelector('[data-f=stars]').value
-    }))
+    packages: Array.from(document.querySelectorAll('#packs .row')).map(function(row) {
+      return {
+        id: 'pack' + Math.random().toString(36).slice(2,8),
+        label: row.querySelector('[data-f=label]').value,
+        coins: +row.querySelector('[data-f=coins]').value,
+        stars: +row.querySelector('[data-f=stars]').value
+      };
+    })
   };
-  setDoc(doc(db, 'config', 'game'), cfg).then(() => {
+  setDoc(doc(db, 'config', 'game'), cfg).then(function() {
     document.getElementById('msg').style.display = 'block';
-    setTimeout(() => document.getElementById('msg').style.display = 'none', 2000);
+    setTimeout(function() { document.getElementById('msg').style.display = 'none'; }, 2000);
+  }).catch(function(e) {
+    alert('Save failed: ' + e.message);
   });
-}
-window.save = save;
+};
 
-// Load current config + live updates
-onSnapshot(doc(db, 'config', 'game'), snap => {
+onSnapshot(doc(db, 'config', 'game'), function(snap) {
   const cfg = snap.data() || { levels: 10, passCost: 50, packages: [] };
   document.getElementById('levels').value = cfg.levels;
   document.getElementById('passCost').value = cfg.passCost;
   document.getElementById('packs').innerHTML = '';
-  (cfg.packages || []).forEach(addPack);
+  (cfg.packages || []).forEach(window.addPack);
+}, function(err) {
+  document.body.innerHTML = '<p style="color:#e74c3c;padding:20px">Firebase error: ' + err.message + '</p>';
 });
 </script>
+</body>
+</html>
